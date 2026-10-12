@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Wiggleroom — Claude usage meter, backup & handoff",
+  "short_name": "Wiggleroom",
+  "version": "3.0.0",
+  "description": "See how much Claude you've got left (5-hour + weekly, messages left, chat size), get warned before you hit the wall, back up every chat locally, and carry any conversation to a fresh chat or another AI. Free. Nothing leaves your computer.",
+  "minimum_chrome_version": "116",
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": {
+    "default_title": "Wiggleroom — Claude usage",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  },
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": ["https://claude.ai/*"],
+  "background": { "service_worker": "background.js" },
+  "commands": {
+    "toggle-bar": { "suggested_key": { "default": "Alt+Shift+W" }, "description": "Show / hide the Wiggleroom bar" },
+    "start-fresh": { "suggested_key": { "default": "Alt+Shift+F" }, "description": "Start fresh: continue this chat in a new one with a summary" }
+  },
+  "content_scripts": [
+    { "matches": ["https://claude.ai/*"], "js": ["hook.js"], "run_at": "document_start", "world": "MAIN" },
+    { "matches": ["https://claude.ai/*"], "js": ["usage.js", "tokenizer.js", "lib.js", "export.js", "content.js"], "run_at": "document_idle" },
+    { "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://gemini.google.com/*", "https://grok.com/*"], "js": ["filler.js"], "run_at": "document_idle" }
+  ]
+}

@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wiggleroom — Local Claude Code exporter</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#faf8f3;--fg:#1a1916;--mut:#726f67;--card:#fff;--line:#ece8df;--acc:#c45a3a;--code:#f4f0e7}
+  @media(prefers-color-scheme:dark){:root{--bg:#141311;--fg:#ece9e2;--mut:#9a968c;--card:#1e1d1a;--line:#312f2a;--code:#100f0d}}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 Inter,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:36px 20px 80px}h1{margin:0 0 6px;font-size:26px}.sub{color:var(--mut);margin:0 0 20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin:16px 0}.card>b{font-size:16px}
+  code,kbd{background:var(--code);padding:1px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em}small,.mut{color:var(--mut)}
+  .btn{display:inline-block;margin:10px 8px 0 0;padding:10px 16px;border-radius:10px;border:1px solid var(--acc);background:transparent;color:var(--fg);font-weight:600;cursor:pointer;font-size:14px;font-family:Inter}
+  .btn.primary{background:var(--acc);color:#fff}.btn.small{margin:0;padding:5px 12px;font-size:13px}.btn.big{width:100%;padding:14px;font-size:16px;margin-top:14px}.btn:disabled{opacity:.5;cursor:not-allowed}
+  .row{display:flex;gap:12px;align-items:center;margin:10px 0;flex-wrap:wrap}#filter{flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font-size:14px}
+  .tablewrap{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;font-size:13px}
+  th{position:sticky;top:0;background:var(--card);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}tr:hover td{background:var(--code)}
+  .tag{font-size:11px;background:var(--code);padding:1px 6px;border-radius:4px;margin-left:6px;color:var(--mut)}.opts{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:14px}label{display:flex;gap:6px;align-items:center;cursor:pointer}
+  .save{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}.bar{height:6px;background:rgba(128,128,128,.2);border-radius:3px;margin-top:18px;overflow:hidden}.bar>div{height:100%;width:0;background:var(--acc)}
+  #status{margin-top:8px;font-size:13px;color:var(--mut);word-break:break-word}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>💻 Local Claude Code sessions → backup</h1>
+  <p class="sub">For Claude Code on <b>your computer</b> (terminal, desktop app, VS Code / JetBrains). For claude.ai chats or Claude Code on the web, use the Wiggleroom bar (⋯ → Backup) on claude.ai.</p>
+  <div class="card"><b>1. Pick your transcripts folder</b>
+    <p>macOS / Linux: <code>~/.claude/projects</code> · Windows: <code>%USERPROFILE%\.claude\projects</code> · WSL: <code>\\wsl$\Ubuntu\home\&lt;user&gt;\.claude\projects</code><br>
+    <small>If Windows says it doesn't exist, local Claude Code hasn't run on this account. Chrome may say "upload" — it only reads locally.</small></p>
+    <label class="btn primary">📁 Choose folder<input type="file" id="dir" webkitdirectory multiple hidden></label>
+    <label class="btn">📄 Choose .jsonl files<input type="file" id="files" accept=".jsonl" multiple hidden></label>
+  </div>
+  <div class="card" id="pick" hidden><b>2. Choose sessions</b>
+    <div class="row"><input id="filter" placeholder="Filter by project or title…"><label><input type="checkbox" id="all" checked> Select all shown</label></div>
+    <div class="tablewrap"><table><thead><tr><th></th><th>Project</th><th>Session</th><th>Last activity</th><th>Prompts</th><th>Size</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="opts"><label><input type="checkbox" id="thinking" checked> Thinking</label><label><input type="checkbox" id="subagents" checked> Subagents</label><label><input type="checkbox" id="raw" checked> Raw .jsonl</label></div>
+    <div class="save"><b>Save to</b>
+      <div class="row"><label><input type="radio" name="mode" id="mFolder"> 📁 Folder</label><button class="btn small" id="pickOut" type="button">Choose folder…</button><span id="fname" class="mut">No folder</span><label><input type="checkbox" id="skip" checked> Skip unchanged</label></div>
+      <div class="row"><label><input type="radio" name="mode" id="mZip" checked> 🗜️ ZIP</label><label><input type="checkbox" id="split"> One ZIP per project</label></div>
+    </div>
+    <button class="btn primary big" id="export">⬇ Export <span id="count">0</span> sessions</button>
+  </div>
+  <div class="bar"><div></div></div><div id="status">Ready.</div>
+</div>
+<script src="lib.js"></script><script src="code.js"></script>
+</body>
+</html>

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Wiggleroom — Claude usage meter, backup & handoff",
   "short_name": "Wiggleroom",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "See how much Claude you've got left (5-hour + weekly, messages left, chat size), get warned before you hit the wall, back up every chat locally, and carry any conversation to a fresh chat or another AI. Free. Nothing leaves your computer.",
   "minimum_chrome_version": "116",
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },

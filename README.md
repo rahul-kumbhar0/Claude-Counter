@@ -4,7 +4,8 @@ A free Chrome extension (Manifest V3) for claude.ai, plus its marketing site.
 
 **Live site:** https://wiggleroom-sigma.vercel.app (Vercel project `wiggleroom`, root directory `site/`, linked to this repo).
 
-- **Measure:** 5-hour window, weekly cap, per-model caps, this-chat size with breakdown, messages left (learned from your real usage), weekly pace projection, alerts, reset notifications, toolbar badge + popup.
+- **Measure:** 5-hour window, weekly cap, per-model caps, this-chat size with breakdown, messages left (learned from your real usage), weekly pace projection, alerts, reset notifications, toolbar badge.
+- **Popup control center:** Usage · Actions (start fresh, carry, backup, run on the active Claude tab) · Prompts · Settings · About, in one tall popup.
 - **Keep:** back up this chat / all chats / Claude Code (web + local) to a folder (incremental) or ZIP: HTML + Markdown + JSON, every artifact version, code blocks, files, project knowledge.
 - **Carry:** start fresh in a new Claude chat (or inside the project) with a smart summary; carry the conversation to ChatGPT / Gemini / Grok; copy summary; download the chat as Markdown; prompt library (`//`).
 
@@ -25,8 +26,19 @@ extension/   the unpacked extension (load this folder in chrome://extensions)
   filler.js       runs on ChatGPT / Gemini / Grok to type the carried summary into the box
   code.html/js    local Claude Code (.jsonl) exporter page
   test/           unit tests (node) and a Playwright end-to-end test against a mocked claude.ai
-site/        static marketing site deployed to Vercel (index.html, og.png, favicon.svg, the extension ZIP)
+site/        static marketing site deployed to Vercel (index.html, privacy.html, og.png, favicon.svg, the extension ZIP)
+store/       Chrome Web Store package: listing copy + permission justifications (listing.md), privacy policy,
+             wiggleroom-3.1.0.zip (upload this), assets/ (5 screenshots 1280×800, small tile, marquee, icon),
+             shots.js + compose.py regenerate the assets from the real extension UI
+docs/        launch-readiness.md — founder notes: are we on track, growth plan, risks, pre-publish checklist
 ```
+
+## Publish to the Chrome Web Store
+
+1. Developer Dashboard → New item → upload `store/wiggleroom-3.1.0.zip`.
+2. Paste the listing copy from `store/listing.md`, upload `store/assets/*`.
+3. Privacy practices tab: single purpose, permission justifications and data disclosures are all in `store/listing.md`; privacy policy URL is https://wiggleroom-sigma.vercel.app/privacy.
+4. After approval, put the listing URL into `site/index.html` (`#storeBtn`) and `extension/popup.js` (About tab).
 
 ## Install (unpacked)
 
@@ -49,7 +61,7 @@ the `//` prompt menu opens, "Start fresh" builds a summary and inserts it into a
 ## Build the ZIP for the site
 
 ```
-cd extension && zip -r -X ../site/wiggleroom-extension.zip manifest.json *.js *.html icons
+cd extension && zip -r -X ../site/wiggleroom-extension.zip manifest.json *.js *.html icons && cp ../site/wiggleroom-extension.zip ../store/wiggleroom-$(node -p "require('./manifest.json').version").zip
 ```
 
 ## Deploy the site

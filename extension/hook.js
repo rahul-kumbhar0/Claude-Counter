@@ -43,7 +43,7 @@
       if (ct.includes('event-stream')) readSSE(res.clone(), url, isSess, cm ? cm[1] : null);
       else if (cm) send('turn', url, { phase: 'end', conv: cm[1] });
       else if (ct.includes('ndjson')) { if (isSess) res.clone().text().then((t) => send('sess', url, parseNd(t))).catch(() => {}); }
-      else if (ct.includes('json') && /claude\.ai|^\//.test(url)) res.clone().json().then((j) => { if (isSess) send('sess', url, j); if (/\/usage\b/.test(url)) send('usage', url, j); else scanUsage(j); }).catch(() => {});
+      else if (ct.includes('json') && /claude\.ai|^\//.test(url)) res.clone().json().then((j) => { if (isSess) send('sess', url, j); if (/\/usage\b/.test(url)) send('usage', url, j); else if (!/chat_conversations|\/projects\/|\/docs\b|\/files\b/.test(url)) scanUsage(j); }).catch(() => {});
     } catch {}
     return res;
   };

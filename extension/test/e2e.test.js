@@ -71,10 +71,32 @@ const PAGE = (p) => `<!doctype html><html><head><title>Claude</title></head><bod
   const inserted = await page.evaluate(() => document.querySelector('.ProseMirror').innerText);
   assert.ok(/Original goal/.test(inserted) && /Key points & decisions/.test(inserted) && /index\.html/.test(inserted) && /Most recent messages/.test(inserted), 'summary sections');
   console.log('start fresh: summary inserted (%d chars)', inserted.length);
-  // popup renders from stored usage
+  // popup: usage tab renders stored usage; actions tab can drive the Claude tab; prompts & settings tabs render
+  await page.goto(`https://claude.ai/chat/${CONV}`); await page.waitForSelector('#wiggleroom-host', { state: 'attached' }); await page.waitForTimeout(800);
   const pop = await ctx.newPage(); await pop.goto(`chrome-extension://${extId}/popup.html`);
-  await pop.waitForFunction(() => /\d+%/.test(document.querySelector('#vS').textContent), null, { timeout: 10000 });
-  console.log('popup:', await pop.evaluate(() => ({ s: document.querySelector('#vS').textContent, w: document.querySelector('#vW').textContent, models: document.querySelector('#models').textContent.trim() })));
+  await pop.waitForFunction(() => /\d+%/.test(document.querySelector('#main').textContent), null, { timeout: 10000 });
+  const usageTab = await pop.evaluate(() => document.querySelector('#main').textContent);
+  assert.ok(/5-hour window/.test(usageTab) && /Weekly · Opus/.test(usageTab) && /messages left/.test(usageTab), 'popup usage tab');
+  await pop.click('.tab[data-t=prompts]'); await pop.waitForSelector('#pAdd'); await pop.fill('#pName', 'From popup'); await pop.fill('#pBody', 'Hello {name}'); await pop.click('#pAdd');
+  await pop.waitForFunction(() => document.querySelector('#plist')?.textContent.includes('From popup'));
+  await pop.click('.tab[data-t=settings]'); await pop.waitForSelector('#badge'); await pop.selectOption('#badge', 'weekly');
+  await pop.waitForFunction(() => new Promise((r) => chrome.storage.local.get('settings', (x) => r(x.settings && x.settings.badge === 'weekly'))));
+  await pop.click('.tab[data-t=actions]'); await pop.waitForSelector('[data-a=copySummary]:not([disabled])', { timeout: 10000 });
+  await pop.click('[data-a=downloadMd]');
+  await pop.waitForFunction(() => /Downloaded|❌/.test(document.querySelector('#st').textContent), null, { timeout: 15000 });
+  const actionSt = await pop.evaluate(() => document.querySelector('#st').textContent); console.log('popup action:', actionSt); assert.ok(/Downloaded/.test(actionSt), actionSt);
+  await pop.close();
+  // Stop must not poison later usage fetches (regression: cancel flag used to stick)
+  await page.bringToFront();
+  await page.bringToFront(); await page.evaluate(() => { const s = document.getElementById('wiggleroom-host').shadowRoot; s.querySelector('#more').click(); s.querySelector('.tab[data-t=backup]').click(); });
+  await page.waitForFunction(() => !!document.getElementById('wiggleroom-host').shadowRoot.querySelector('#stop'));
+  await page.evaluate(() => { const s = document.getElementById('wiggleroom-host').shadowRoot; s.querySelector('#stop').hidden = false; s.querySelector('#stop').click(); });
+  await page.evaluate(() => { const s = document.getElementById('wiggleroom-host').shadowRoot; s.querySelector('#sSession .v').textContent = 'x'; });
+  await page.evaluate(() => document.getElementById('wiggleroom-host').shadowRoot.querySelector('.tab[data-t=details]').click());
+  await page.waitForFunction(() => !!document.getElementById('wiggleroom-host').shadowRoot.querySelector('#refresh'));
+  await page.evaluate(() => document.getElementById('wiggleroom-host').shadowRoot.querySelector('#refresh').click());
+  await page.waitForFunction(() => /\d+%/.test(document.getElementById('wiggleroom-host').shadowRoot.querySelector('#sSession .v').textContent), null, { timeout: 10000 });
+  console.log('usage still updates after Stop: ok');
   // backup: export this chat as ZIP (mock has no files) — verify a download happens
   await page.goto(`https://claude.ai/chat/${CONV}`); await page.waitForSelector('#wiggleroom-host', { state: 'attached' }); await page.waitForTimeout(600);
   await page.evaluate(() => { const s = document.getElementById('wiggleroom-host').shadowRoot; s.querySelector('#more').click(); s.querySelector('.tab[data-t=backup]').click(); });

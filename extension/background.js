@@ -50,6 +50,7 @@ async function applyUsage(u, source) {
   const prev = (await get('usage')).usage || {};
   // merge: keep whichever field is fresher / present
   const merged = { ...prev, ...Object.fromEntries(Object.entries(u).filter(([, v]) => v != null && !(typeof v === 'object' && !Object.keys(v).length))), at: Date.now(), source };
+  const past = Date.now() - 120e3; if (merged.sessionReset && merged.sessionReset < past) merged.sessionReset = null; if (merged.weeklyReset && merged.weeklyReset < past) merged.weeklyReset = null; delete merged.limitEvent;
   await set({ usage: merged, usageError: null });
   await recordHistory(merged);
   await updateBadge(merged);
@@ -119,6 +120,10 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     if (m.type === 'usage' && m.usage) { await applyUsage(m.usage, 'page'); return reply(true); }
     if (m.type === 'refresh') { await poll('manual'); return reply((await get('usage')).usage || null); }
     if (m.type === 'open-code') { await chrome.tabs.create({ url: chrome.runtime.getURL('code.html') }); return reply(true); }
+    if (m.type === 'open-url' && /^https:\/\/(chatgpt\.com|chat\.openai\.com|gemini\.google\.com|grok\.com|claude\.ai)\//.test(m.url || '')) { await chrome.tabs.create({ url: m.url }); return reply(true); }
+    if (m.type === 'claude-tab') { const tabs = await chrome.tabs.query({ url: 'https://claude.ai/*' }); const active = tabs.find((t) => t.active) || tabs[0]; return reply(active ? { id: active.id, url: active.url } : null); }
+    if (m.type === 'tab-action' && m.name) { const tabs = await chrome.tabs.query({ url: 'https://claude.ai/*' }); const t = tabs.find((x) => x.active) || tabs[0]; if (!t) return reply({ ok: false, error: 'Open claude.ai first.' }); try { const ok = await chrome.tabs.sendMessage(t.id, { wr: 'action', name: m.name }); return reply({ ok: !!ok }); } catch (e) { return reply({ ok: false, error: 'Reload the claude.ai tab, then try again.' }); } }
+    if (m.type === 'tab-state') { const tabs = await chrome.tabs.query({ url: 'https://claude.ai/*' }); const t = tabs.find((x) => x.active) || tabs[0]; if (!t) return reply(null); try { return reply(await chrome.tabs.sendMessage(t.id, { wr: 'state' })); } catch { return reply(null); } }
     if (m.type === 'open-claude') {
       const tabs = await chrome.tabs.query({ url: 'https://claude.ai/*' });
       if (tabs[0]) { await chrome.tabs.update(tabs[0].id, { active: true }); try { await chrome.windows.update(tabs[0].windowId, { focused: true }); } catch {} if (m.then) chrome.tabs.sendMessage(tabs[0].id, { wr: m.then }).catch(() => {}); }

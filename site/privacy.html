@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Wiggleroom — Privacy policy</title><meta name="description" content="Wiggleroom privacy policy: no server, no accounts, nothing leaves your computer."><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>:root{--bg:#f6f2ea;--fg:#1b1917;--mut:#6f6a60;--line:rgba(0,0,0,.08);--acc:#c9573a}@media(prefers-color-scheme:dark){:root{--bg:#0f0e0c;--fg:#f3eee4;--mut:#8f887a;--line:rgba(255,255,255,.1);--acc:#e2704f}}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:Geist,Inter,-apple-system,sans-serif;line-height:1.65}.wrap{max-width:720px;margin:0 auto;padding:60px 20px 80px}h1{font-size:34px;letter-spacing:-.02em;margin:0 0 6px}h2{font-size:18px;margin:28px 0 8px}p{margin:0 0 12px;color:var(--fg)}.mut{color:var(--mut)}a{color:var(--acc)}code{font-family:ui-monospace,Menlo,monospace;font-size:13px}.back{display:inline-block;margin-bottom:28px;font-size:14px;color:var(--mut)}</style></head>
+<body><div class="wrap"><a class="back" href="/">← Wiggleroom</a>
+<h1>Privacy policy</h1><p class="mut">Last updated 14 October 2026</p>
+<p>Wiggleroom is a browser extension that shows your Claude usage limits and lets you back up and carry on your own Claude conversations.</p>
+<h2>What it reads</h2><p>Inside your browser, using the login you already have on claude.ai, Wiggleroom reads your own usage figures and, when you ask it to build a summary or a backup, your own conversations and project files. It observes the page's own network requests to notice when a message is sent, so it can learn your cost per message. It never modifies those requests.</p>
+<h2>What it stores</h2><p>Settings, saved prompts, usage history, learned per-message costs and a pending summary during a handoff are kept in the browser's extension storage on your device. Backups are written only to the folder you choose or a ZIP you download.</p>
+<h2>What it sends</h2><p><b>Nothing.</b> Wiggleroom has no server, no analytics, no crash reporting and no accounts. It never transmits your chats, files, usage or keys anywhere.</p>
+<h2>Other sites</h2><p>When you click "Carry to ChatGPT / Gemini / Grok", the extension types your summary into that site's message box and downloads a Markdown file. It does not read anything from those sites, and you decide whether to send.</p>
+<h2>Permissions</h2><p><code>storage</code> (local settings and history), <code>alarms</code> (periodic usage poll and reset timers), <code>notifications</code> (optional reset notification), host access to claude.ai (reading your own usage), and content scripts on chatgpt.com, chat.openai.com, gemini.google.com and grok.com (typing your summary on request).</p>
+<h2>Removal</h2><p>Uninstalling the extension deletes its storage. Backups you saved remain where you put them.</p>
+<h2>Contact</h2><p>Open an issue at <a href="https://github.com/rahul-kumbhar0/Claude-Counter">github.com/rahul-kumbhar0/Claude-Counter</a>.</p>
+<p class="mut">Wiggleroom is independent and not affiliated with or endorsed by Anthropic, OpenAI, Google or xAI.</p>
+</div></body></html>

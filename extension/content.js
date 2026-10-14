@@ -10,11 +10,15 @@
   const { DEFAULTS, parseUsage, modelKey, messagesLeft, projectWeekly, pct, resetIn, fmtWhen, kfmt } = U;
 
   /* ================= storage (chrome.storage.local — shared with popup, background, other sites) ================= */
-  const sget = (k) => new Promise((r) => chrome.storage.local.get(k, (v) => r(typeof k === 'string' ? v[k] : v)));
-  const sset = (o) => new Promise((r) => chrome.storage.local.set(o, r));
+  const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch { return false; } };
+  const sget = (k) => new Promise((r) => { try { chrome.storage.local.get(k, (v) => r(v ? (typeof k === 'string' ? v[k] : v) : undefined)); } catch { r(undefined); } });
+  const sset = (o) => new Promise((r) => { try { chrome.storage.local.set(o, r); } catch { r(); } });
+  const msg = (m) => new Promise((r) => { try { chrome.runtime.sendMessage(m, (x) => { void chrome.runtime.lastError; r(x); }); } catch { r(null); } });
+  const timers = []; const every = (fn, ms) => timers.push(setInterval(() => { if (!alive()) { teardown(); return; } try { fn(); } catch (e) { console.debug('[Wiggleroom]', e); } }, ms));
+  function teardown() { timers.forEach(clearInterval); timers.length = 0; try { host && host.remove(); } catch {} window.__wrLoaded = false; }
   let S = { ...DEFAULTS };
   async function loadSettings() { S = { ...DEFAULTS, ...((await sget('settings')) || {}) }; }
-  async function saveSettings(patch) { S = { ...S, ...patch }; await sset({ settings: S }); chrome.runtime.sendMessage({ type: 'settings-changed' }).catch?.(() => {}); render(); }
+  async function saveSettings(patch) { S = { ...S, ...patch }; await sset({ settings: S }); msg({ type: 'settings-changed' }); render(); }
 
   /* ================= usage state ================= */
   let usage = { session: null, weekly: null, sessionReset: null, weeklyReset: null, models: {}, extra: null, at: 0 };
@@ -24,6 +28,7 @@
     for (const k of ['session', 'weekly', 'sessionReset', 'weeklyReset', 'extra']) if (u[k] != null) usage[k] = u[k];
     if (u.models) for (const m of Object.keys(u.models)) if (u.models[m]) usage.models[m] = { ...(usage.models[m] || {}), ...u.models[m] };
     if (u.limitEvent) usage.limitEvent = u.limitEvent;
+    const past = Date.now() - 120e3; if (usage.sessionReset && usage.sessionReset < past) usage.sessionReset = null; if (usage.weeklyReset && usage.weeklyReset < past) usage.weeklyReset = null;
     usage.at = Date.now();
   }
   function ingest(j, source = 'page') {
@@ -31,10 +36,11 @@
       const u = parseUsage(j);
       if (u.session == null && u.weekly == null && !Object.keys(u.models).length && !u.limitEvent) return;
       merge(u); render(); checkAlerts();
-      if (Date.now() - lastPush > 8000) { lastPush = Date.now(); chrome.runtime.sendMessage({ type: 'usage', usage: { ...usage, source } }).catch?.(() => {}); }
+      if (Date.now() - lastPush > 8000) { lastPush = Date.now(); msg({ type: 'usage', usage: { ...usage, source } }); }
     } catch {}
   }
   async function fetchUsage() {
+    if (document.hidden && usage.at && Date.now() - usage.at < 10 * 60e3) return false;
     try { const org = await X.getOrgId(); const j = await X.api(`/api/organizations/${org}/usage`); ingest(j, 'page'); return true; }
     catch (e) { console.debug('[Wiggleroom] usage fetch failed', e && e.message); return false; }
   }
@@ -46,8 +52,9 @@
   function modelLabel(str) { const k = modelKey(str) || 'sonnet'; const v = (String(str || '').toLowerCase().match(/(?:opus|sonnet|haiku)[- ]?(\d+)(?:[-.](\d+))?/) || []); return k[0].toUpperCase() + k.slice(1) + (v[1] ? ' ' + v[1] + (v[2] && v[2].length < 3 ? '.' + v[2] : '') : ''); }
   function detectModelFromDom() {
     try {
-      const card = composerCard(); const txt = (card ? card.innerText : '') + ' ' + (document.querySelector('[data-testid*="model"]')?.innerText || '');
-      const m = txt.match(/\b(Opus|Sonnet|Haiku)\b[^\n]{0,12}/i);
+      const card = composerCard(); const ctrls = [...(card ? card.querySelectorAll('button,[role="button"],[data-testid*="model"]') : []), ...document.querySelectorAll('[data-testid*="model"]')];
+      const txt = ctrls.map((b) => b.innerText || b.textContent || '').join(' | ');
+      const m = txt.match(/\b(Opus|Sonnet|Haiku)\b[^|\n]{0,12}/i);
       if (m && model.from !== 'request') model = { key: modelKey(m[1]), name: modelLabel(m[0]), from: 'dom' };
     } catch {}
   }
@@ -55,7 +62,7 @@
   let ctxPending = null;
   async function refreshContext(force = false) {
     const id = convId();
-    if (!force && ctx.conv === id && Date.now() - ctx.at < 45000) return ctx;
+    if (!force && (document.hidden || (ctx.conv === id && Date.now() - ctx.at < 60000))) return ctx;
     if (ctxPending) return ctxPending;
     ctxPending = (async () => {
       const est = (t) => (Tok ? Tok.estimate(t || '') : Math.round((t || '').length / 4));
@@ -106,8 +113,8 @@
   async function checkAlerts() {
     if (!S.alerts) return;
     const levels = (S.alertAt || [80, 95]).slice().sort((a, b) => a - b);
-    const fire = async (kind, v, reset) => {
-      const p = pct(v); if (p == null) return;
+    const fire = async (kind, v, reset0) => {
+      const p = pct(v); if (p == null) return; const reset = reset0 || 'b' + Math.floor(Date.now() / (kind === 'session' ? 5 * 3600e3 : 7 * 86400e3));
       for (const lv of levels) { const key = `${kind}:${reset || 'x'}:${lv}`; if (p >= lv && !alerted[key]) { alerted[key] = Date.now(); await sset({ alerted }); toast(kind === 'session' ? `${p}% of your 5-hour window used${reset ? ` · resets in ${resetIn(reset)}` : ''}. Long chat? ✦ Start fresh keeps context for far less usage.` : `${p}% of your weekly limit used${reset ? ` · resets ${fmtWhen(reset)}` : ''}. Consider moving heavy work to a fresh chat or another AI.`, 7000); } }
       if (p >= 100) { const key = `${kind}:${reset || 'x'}:full`; if (!alerted[key]) { alerted[key] = Date.now(); await sset({ alerted }); toast(kind === 'session' ? `5-hour limit reached${reset ? ` · back at ${fmtWhen(reset)}` : ''}. Carry this chat to ChatGPT / Gemini / Grok from the ⋯ menu.` : `Weekly limit reached${reset ? ` · back ${fmtWhen(reset)}` : ''}.`, 9000); } }
     };
@@ -120,15 +127,18 @@
   const findComposer = () => document.querySelector('div[contenteditable="true"].ProseMirror') || document.querySelector('div[contenteditable="true"][data-placeholder]') || document.querySelector('fieldset div[contenteditable="true"]') || document.querySelector('div[contenteditable="true"]') || document.querySelector('textarea');
   const composerText = () => { const el = findComposer(); return el ? (el.tagName === 'TEXTAREA' ? el.value : el.innerText || '') : ''; };
   // the visual "card" around the composer: walk up while the parent is barely wider than the child
+  let cardCache = { el: null, card: null, at: 0 };
   function composerCard() {
     const el = findComposer(); if (!el) return null;
-    let node = el, best = el;
-    for (let i = 0; i < 8 && node.parentElement && node.parentElement !== document.body; i++) {
-      const p = node.parentElement, pr = p.getBoundingClientRect(), nr = best.getBoundingClientRect();
-      if (pr.width - nr.width > 120 || pr.height > 480 || pr.height - nr.height > 320) break;
+    if (cardCache.el === el && cardCache.card && cardCache.card.isConnected && Date.now() - cardCache.at < 5000) return cardCache.card;
+    const er = el.getBoundingClientRect(); let node = el, best = el, boxed = null;
+    for (let i = 0; i < 10 && node.parentElement && node.parentElement !== document.body; i++) {
+      const p = node.parentElement, pr = p.getBoundingClientRect();
+      if (pr.width - er.width > 160 || pr.height > 520 || pr.width < er.width) break;
+      try { const cs = getComputedStyle(p); const hasBox = (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none') || (cs.boxShadow && cs.boxShadow !== 'none') || (cs.backgroundColor && !/rgba\(0, 0, 0, 0\)|transparent/.test(cs.backgroundColor) && p.tagName !== 'FORM'); if (hasBox) boxed = p; } catch {}
       node = p; best = p;
     }
-    return best;
+    const card = boxed || best; cardCache = { el, card, at: Date.now() }; return card;
   }
   function insertText(text) {
     const el = findComposer(); if (!el) return false; el.focus();
@@ -179,7 +189,7 @@
     const intro = `I'm continuing a conversation I had with Claude. Here's a summary; I've also attached the full conversation as a Markdown file for complete context.\n\n${text}`;
     try { await navigator.clipboard.writeText(intro); } catch {}
     await sset({ pendingSummary: null, pendingMove: { target, intro, at: Date.now() } });
-    st(`✅ Opening ${t.name}. The summary fills the box (and is copied). Attach the downloaded .md file for full context.`); await sleep(500); window.open(t.url, '_blank');
+    st(`✅ Opening ${t.name}. The summary fills the box (and is copied). Attach the downloaded .md file for full context.`); await sleep(300); const ok = await msg({ type: 'open-url', url: t.url }); if (!ok) window.open(t.url, '_blank');
   }
   async function maybeFillPending() {
     try {
@@ -202,7 +212,10 @@
     menu.innerHTML = `<div class="ch">Insert prompt — type to filter · ↑↓ · Enter · Esc</div><div class="plist"></div>`;
     const list = menu.querySelector('.plist'); let filter = '', sel = 0;
     const render = () => { const items = prompts.filter((p) => (p.name + ' ' + p.body).toLowerCase().includes(filter.toLowerCase())); menu._items = items; list.innerHTML = ''; if (!items.length) { list.innerHTML = '<div class="empty">No match</div>'; return; } sel = Math.min(sel, items.length - 1); items.forEach((p, i) => { const row = document.createElement('div'); row.className = 'prow' + (i === sel ? ' on' : ''); row.innerHTML = `<div class="nm"></div><div class="bd"></div>`; row.querySelector('.nm').textContent = p.name; row.querySelector('.bd').textContent = p.body.slice(0, 90); row.onmouseenter = () => { sel = i; render(); }; row.onclick = () => choose(p); list.appendChild(row); }); };
-    const choose = (p) => { closeMenu(); const el2 = findComposer(); if (el2 && el2.tagName !== 'TEXTAREA') { try { document.execCommand('delete'); document.execCommand('delete'); } catch {} } const b = fillVariables(p.body); if (b != null) insertText(b); };
+    const choose = (p) => { closeMenu(); const el2 = findComposer(); const b = fillVariables(p.body); if (b == null) return;
+      if (el2 && el2.tagName === 'TEXTAREA') { el2.value = el2.value.replace(/\/\/$/, ''); el2.dispatchEvent(new Event('input', { bubbles: true })); }
+      else if (el2) { try { el2.focus(); const sel = window.getSelection(); if (sel && /\/\/$/.test(el2.innerText)) { sel.modify('extend', 'backward', 'character'); sel.modify('extend', 'backward', 'character'); if (sel.toString() === '//') document.execCommand('delete'); else sel.collapseToEnd(); } } catch {} }
+      insertText(b); };
     menu._key = (e) => { if (e.key === 'Escape') { closeMenu(); return; } if (e.key === 'ArrowDown') { sel++; e.preventDefault(); render(); return; } if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); e.preventDefault(); render(); return; } if (e.key === 'Enter' && menu._items && menu._items[sel]) { e.preventDefault(); e.stopPropagation(); choose(menu._items[sel]); return; } if (e.key === 'Backspace') { filter = filter.slice(0, -1); render(); return; } if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) { filter += e.key; render(); } };
     document.addEventListener('keydown', menu._key, true); render(); shadow.appendChild(menu);
   }
@@ -218,7 +231,7 @@
   @media(prefers-color-scheme:dark){:host{--bg:#1e1d1a;--fg:#ece9e2;--mut:#9a968c;--line:#34322c;--card:#1e1d1a;--soft:#171614}}
   :host([data-theme=dark]){--bg:#1e1d1a;--fg:#ece9e2;--mut:#9a968c;--line:#34322c;--card:#1e1d1a;--soft:#171614}
   .bar{position:fixed;z-index:2147483000;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 28px rgba(50,30,15,.14);display:flex;align-items:center;gap:12px;padding:7px 10px;font-size:12px;line-height:1.25;transition:opacity .2s;max-width:100vw}
-  .bar.float{right:16px;bottom:16px;left:auto;width:auto!important;max-width:calc(100vw - 32px)}
+  .bar.float{right:16px;bottom:16px;left:auto;width:auto!important;max-width:calc(100vw - 32px)}.bar{overflow:hidden}
   .bar.compact .lab{display:none}.bar.compact .stat{min-width:0}.bar.compact .track{width:48px}
   .stat{display:flex;flex-direction:column;gap:3px;min-width:118px;cursor:pointer;flex:1 1 auto}.stat:hover .lab{color:var(--fg)}
   .lab{color:var(--mut);font-size:10.5px;letter-spacing:.02em;white-space:nowrap}.val{font-weight:700;font-size:12px;white-space:nowrap;display:flex;gap:5px;align-items:baseline}.val small{font-weight:500;color:var(--mut)}
@@ -234,7 +247,7 @@
   .ph{display:flex;align-items:center;gap:4px;padding:8px 8px 0;border-bottom:1px solid var(--line)}
   .tab{border:none;background:none;color:var(--mut);font-weight:600;font-size:12px;padding:7px 9px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}.tab.on{color:var(--acc);border-color:var(--acc)}
   .ph .x{margin-left:auto;border:none;background:none;color:var(--mut);font-size:16px;cursor:pointer;padding:2px 6px}
-  .pb{overflow:auto;padding:12px 14px;font-size:12.5px;line-height:1.5}.pb h5{margin:10px 0 6px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}.pb h5:first-child{margin-top:0}.pb p{margin:0 0 8px}.mut{color:var(--mut)}.tiny{font-size:11px;color:var(--mut)}
+  .pb{overflow:auto;flex:1;min-height:0;padding:12px 14px;font-size:12.5px;line-height:1.5}.pb h5{margin:10px 0 6px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}.pb h5:first-child{margin-top:0}.pb p{margin:0 0 8px}.mut{color:var(--mut)}.tiny{font-size:11px;color:var(--mut)}
   .row{display:flex;align-items:center;gap:8px;margin:5px 0}.row>span:first-child{width:120px;color:var(--mut);flex:none}.row .track{flex:1;height:8px}.row b{width:58px;text-align:right}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
   .tip{background:var(--soft);border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin:8px 0;font-size:12px}
@@ -297,10 +310,15 @@
     if (S.position === 'float') { bar.style.left = bar.style.top = bar.style.width = ''; }
     else {
       const card = composerCard(); const r = card && card.getBoundingClientRect();
-      if (!r || r.width < 300 || r.bottom > window.innerHeight - 8 || r.top < 0) { bar.classList.add('float'); bar.style.left = bar.style.top = bar.style.width = ''; }
-      else { bar.classList.remove('float'); bar.style.left = Math.round(r.left) + 'px'; bar.style.top = Math.round(r.bottom + 6) + 'px'; bar.style.width = Math.round(r.width) + 'px'; }
+      if (!r || r.width < 300 || r.top < 0 || r.top > window.innerHeight) { bar.classList.add('float'); bar.style.left = bar.style.top = bar.style.width = ''; }
+      else {
+        bar.classList.remove('float'); const h = bar.offsetHeight || 52; const below = r.bottom + 6 + h <= window.innerHeight - 4;
+        bar.style.left = Math.round(r.left) + 'px'; bar.style.width = Math.round(r.width) + 'px';
+        bar.style.top = Math.round(below ? r.bottom + 6 : Math.max(4, r.top - h - 8)) + 'px';
+        bar.classList.toggle('above', !below); bar.classList.toggle('compact', !!S.compact || r.width < 640);
+      }
     }
-    if (!panel.hidden) { const br = bar.getBoundingClientRect(); panel.style.left = Math.max(12, Math.min(window.innerWidth - 392, br.right - 380)) + 'px'; panel.style.bottom = Math.max(12, window.innerHeight - br.top + 8) + 'px'; }
+    if (!panel.hidden) { const br = bar.getBoundingClientRect(); const above = br.top > window.innerHeight / 2; panel.style.left = Math.max(12, Math.min(window.innerWidth - 392, br.right - 380)) + 'px'; if (above) { panel.style.bottom = Math.max(12, window.innerHeight - br.top + 8) + 'px'; panel.style.top = ''; panel.style.maxHeight = Math.min(640, br.top - 24) + 'px'; } else { panel.style.top = Math.round(br.bottom + 8) + 'px'; panel.style.bottom = ''; panel.style.maxHeight = Math.min(640, window.innerHeight - br.bottom - 24) + 'px'; } }
   }
 
   /* ---- panel ---- */
@@ -309,8 +327,9 @@
   function closePanel() { if (shadow) $('#panel').hidden = true; }
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const bar = (lab, p, v) => `<div class="row"><span>${esc(lab)}</span><div class="track ${level(p)}"><span style="width:${p ?? 0}%"></span></div><b>${esc(v)}</b></div>`;
+  let drawSeq = 0;
   async function drawPanel() {
-    const pb = $('#pb'); if (!pb) return;
+    const pb = $('#pb'); if (!pb) return; const my = ++drawSeq; const stale = () => my !== drawSeq;
     if (tab === 'details') {
       const sp = pct(usage.session), wp = pct(usage.weekly);
       const ml = messagesLeft({ session: usage.session, samples, ctx: ctx.tokens, model: model.key, weights: S.modelWeights });
@@ -322,7 +341,7 @@
       html += `<h5>What this chat re-sends every message</h5>` + bar('Conversation', Math.round(ctx.chat / Math.max(1, ctx.tokens) * 100), '~' + kfmt(ctx.chat)) + (ctx.project ? bar('Project knowledge', Math.round(ctx.project / Math.max(1, ctx.tokens) * 100), '~' + kfmt(ctx.project)) : '') + (ctx.files ? bar('Files & attachments', Math.round(ctx.files / Math.max(1, ctx.tokens) * 100), '~' + kfmt(ctx.files)) : '') + `<div class="tiny">≈${kfmt(ctx.tokens)} of ${kfmt(S.ctxWindow)} context. ${ctx.project > ctx.chat ? 'Project knowledge is the biggest share — trimming it frees usage on every message.' : ctx.tokens > S.ctxWindow * 0.5 ? 'Over half the window: Claude will start forgetting the top and each message costs more. ✦ Start fresh.' : 'Healthy.'}</div>`;
       html += `<h5>Weekly pace</h5>` + (pj ? (pj.pace === 'idle' ? `<p>No weekly usage movement in the last days. ${pj.unusedAtReset != null ? `About ${pct(pj.unusedAtReset)}% would go unused at reset.` : ''}</p>` : `<p>Burning ≈<b>${pct(pj.slopePerDay)}% per day</b>. ${pj.before ? `<b>On this pace you hit the weekly cap ${fmtWhen(pj.hitAt)}</b>, before it resets ${fmtWhen(pj.reset)}. Spread heavy work out or use Sonnet for routine tasks.` : pj.reset ? `You'd reach 100% ${fmtWhen(pj.hitAt)} — after the reset, so about ${pct(pj.unusedAtReset)}% stays unused. Room to spare.` : `You'd reach 100% ${fmtWhen(pj.hitAt)}.`}</p>`) : `<p class="mut">Needs a few hours of readings — check back later.</p>`) + `<canvas class="spark" id="spark" width="700" height="92"></canvas>`;
       html += `<h5>Why do I hit limits?</h5><p class="mut">Claude counts <b>two windows at once</b>: a rolling 5-hour window and a weekly cap (plus per-model weekly caps on some plans). Every message re-sends the whole chat, so a long conversation can burn 10× what a short one does. Peak hours can drain the 5-hour window faster.</p><div class="tiny">Updated ${usage.at ? new Date(usage.at).toLocaleTimeString() : 'never'} · <a href="#" id="refresh" style="color:var(--acc)">refresh</a> · <a href="https://claude.ai/settings/usage" target="_blank" style="color:var(--acc)">Claude's usage page</a></div>`;
-      pb.innerHTML = html; $('#refresh').onclick = (e) => { e.preventDefault(); fetchUsage().then(() => refreshContext(true)).then(drawPanel); }; drawSpark(history);
+      if (stale()) return; pb.innerHTML = html; $('#refresh').onclick = (e) => { e.preventDefault(); fetchUsage().then(() => refreshContext(true)).then(drawPanel); }; drawSpark(history);
     } else if (tab === 'carry') {
       const inChat = !!convId();
       pb.innerHTML = `<h5>Start fresh in Claude</h5><p class="mut">Builds a summary (goal, decisions, latest code, recent messages), opens a new chat and drops it into the box. Keeps your context, costs a fraction per message.</p>
@@ -337,7 +356,7 @@
       $('#cCopy').onclick = () => run(async (s) => { const { text } = await buildSummary(); await navigator.clipboard.writeText(text); s('✅ Summary copied.'); }, st);
       $('#cMd').onclick = () => run(async (s) => { const { name, md } = await fullChatMarkdown(); saveBlob(new Blob([md], { type: 'text/markdown' }), `${name}.md`); s('✅ Downloaded.'); }, st);
     } else if (tab === 'backup') {
-      const mode = (await X.kvGet('mode')) || 'zip'; const dir = await X.kvGet('dir');
+      const mode = (await X.kvGet('mode')) || 'zip'; const dir = await X.kvGet('dir'); if (stale()) return;
       pb.innerHTML = `<h5>Save to</h5><label class="opt"><input type="radio" name="m" id="mZip"${mode !== 'folder' ? ' checked' : ''}> ZIP download</label><label class="opt"><input type="radio" name="m" id="mFolder"${mode === 'folder' ? ' checked' : ''}> Folder on this computer <span class="tiny">(incremental, skips unchanged)</span></label>
         <div class="row" style="margin-left:22px"><button class="btn sm" id="pick">Choose folder…</button><span class="tiny" id="fname">${esc(dir ? dir.name : 'No folder chosen')}</span></div>
         <h5>Back up</h5><button class="btn primary w" id="one">${X.isCodePage() ? 'Export this Claude Code session' : 'Export this chat'}</button><button class="btn w" id="all">Export ALL chats</button><button class="btn w" id="allCode">Export ALL Claude Code (web) sessions</button><button class="btn w" id="local">Local Claude Code sessions (terminal / IDE)…</button><button class="btn w" id="stop" hidden>Stop</button>
@@ -372,7 +391,19 @@
     line('w', '#c45a3a'); line('s', '#3f7d5a');
     g.fillStyle = 'rgba(128,128,128,.9)'; g.font = '11px Inter, sans-serif'; g.fillText('weekly', 6, 12); g.fillStyle = '#3f7d5a'; g.fillText('5-hour', 52, 12); g.fillStyle = 'rgba(128,128,128,.9)'; g.fillText('last 7 days', W - 70, 12);
   }
-  async function run(fn, st) { if (busy) return toast('Something is already running.'); busy = true; X.reset(); const stop = $('#stop'); if (stop) stop.hidden = false; try { await fn(st); } catch (e) { console.error('[Wiggleroom]', e); st('❌ ' + (e.message || e)); } finally { busy = false; if (stop && stop.isConnected) stop.hidden = true; } }
+  async function run(fn, st) { if (busy) return toast('Something is already running.'); busy = true; X.reset(); const stop = $('#stop'); if (stop) stop.hidden = false; try { await fn(st); } catch (e) { console.error('[Wiggleroom]', e); st('❌ ' + (e.message || e)); } finally { busy = false; X.reset(); if (stop && stop.isConnected) stop.hidden = true; } }
+  // actions the toolbar popup can trigger in this tab; progress is mirrored to storage (jobStatus)
+  const jobStatus = (text, progress) => { sset({ jobStatus: { text, progress: progress ?? null, at: Date.now(), busy } }); const e = $('#bst') || $('#cst'); if (e && e.isConnected) e.textContent = text; };
+  jobStatus.progress = (i, n) => { sset({ jobStatus: { text: '', progress: Math.round((i / Math.max(1, n)) * 100), at: Date.now(), busy: true } }); const pr = $('.prog>span'); if (pr) pr.style.width = Math.round((i / Math.max(1, n)) * 100) + '%'; };
+  const ACTIONS = {
+    startFresh: (st) => startFresh(st, 'new'), startFreshProject: (st) => startFresh(st, 'project'),
+    carryChatgpt: (st) => carryTo('chatgpt', st), carryGemini: (st) => carryTo('gemini', st), carryGrok: (st) => carryTo('grok', st),
+    copySummary: async (st) => { const { text } = await buildSummary(); await navigator.clipboard.writeText(text); st('✅ Summary copied.'); },
+    downloadMd: async (st) => { const { name, md } = await fullChatMarkdown(); saveBlob(new Blob([md], { type: 'text/markdown' }), `${name}.md`); st('✅ Downloaded.'); },
+    exportChat: (st) => (X.isCodePage() ? X.exportCurrentCode : X.exportCurrentChat)(st), exportAll: X.exportAllChats, exportCode: X.exportAllCode,
+    stop: async (st) => { X.cancel(); st('Stopping…'); },
+  };
+  async function runAction(name) { const fn = ACTIONS[name]; if (!fn) return false; if (name === 'stop') { await fn(jobStatus); return true; } jobStatus('Starting…'); await run(fn, jobStatus); const last = (await sget('jobStatus')) || {}; await sset({ jobStatus: { ...last, busy: false, at: Date.now() } }); return true; }
 
   function wire() {
     $('#fresh').onclick = () => { openPanel('carry'); run((s) => startFresh(s, 'new'), (t) => { const e = $('#cst'); if (e) e.textContent = t; else toast(t); }); };
@@ -393,6 +424,8 @@
     else if (m.wr === 'start-fresh') $('#fresh').click();
     else if (m.wr === 'backup') { saveSettings({ hidden: false }); openPanel('backup'); }
     else if (m.wr === 'details') { saveSettings({ hidden: false }); openPanel('details'); }
+    else if (m.wr === 'action') { runAction(m.name).then((ok) => reply && reply(ok)); return true; }
+    else if (m.wr === 'state') { reply && reply({ conv: convId(), code: X.isCodePage(), model: model.name, ctx, usage }); return; }
     reply && reply(true);
   });
   chrome.storage.onChanged.addListener((ch, area) => {
@@ -406,12 +439,15 @@
     await loadSettings(); samples = (await sget('samples')) || []; alerted = (await sget('alerted')) || {}; await loadPrompts();
     const stored = await sget('usage'); if (stored && stored.at) merge(stored);
     ensureHost(); render();
-    fetchUsage(); setInterval(fetchUsage, 60000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchUsage(); });
-    setInterval(() => { ensureHost(); detectModelFromDom(); render(); }, 1500);
-    setInterval(() => refreshContext(false), 20000); refreshContext(true);
-    let lastPath = location.pathname; setInterval(() => { if (location.pathname !== lastPath) { lastPath = location.pathname; window.__wrNudged = false; refreshContext(true); maybeFillPending(); } }, 700);
-    window.addEventListener('resize', place, { passive: true }); window.addEventListener('scroll', place, { passive: true, capture: true });
+    fetchUsage(); every(fetchUsage, 60000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { fetchUsage(); refreshContext(false); } });
+    every(() => { ensureHost(); detectModelFromDom(); render(); }, 1500);
+    every(() => refreshContext(false), 30000); refreshContext(true);
+    let lastPath = location.pathname; every(() => { if (location.pathname !== lastPath) { lastPath = location.pathname; window.__wrNudged = false; cardCache.at = 0; refreshContext(true); maybeFillPending(); } }, 700);
+    let raf = 0; const onMove = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; place(); }); };
+    window.addEventListener('resize', onMove, { passive: true }); window.addEventListener('scroll', onMove, { passive: true, capture: true });
+    try { const ro = new ResizeObserver(onMove); const watch = () => { const c = composerCard(); if (c && c !== ro._el) { if (ro._el) ro.unobserve(ro._el); ro.observe(c); ro._el = c; } }; watch(); every(watch, 2000); } catch {}
+    try { new MutationObserver(onMove).observe(document.body, { childList: true, subtree: false }); } catch {}
     setTimeout(maybeFillPending, 1200);
   })();
 })();
